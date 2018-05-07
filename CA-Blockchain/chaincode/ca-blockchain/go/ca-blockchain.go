@@ -36,7 +36,7 @@ func (s *SmartContract) Invoke(APIstub shim.ChaincodeStubInterface) sc.Response 
 		return s.queryCertificate(APIstub, args)
 	} else if function == "queryCertificateHistory" {
 		return s.queryCertificateHistory(APIstub, args)
-	}else if function == "addCertificate" {
+	} else if function == "addCertificate" {
 		return s.addCertificate(APIstub, args)
 	}
 	return shim.Error("Invalid Smart Contract function name.")
@@ -170,11 +170,6 @@ func (s *SmartContract) addCertificate(APIstub shim.ChaincodeStubInterface, args
 
 	} else if certAsBytes != nil {
 
-		if sigString == "" {
-			return shim.Error("Verification failed: signature not provided.")
-		}
-
-		//update the certificate after checking signature with old public key
 		oldCertificate := Certificate{}
 		err = json.Unmarshal(certAsBytes, &oldCertificate)
 		oldCertString := oldCertificate.CertString
@@ -187,10 +182,20 @@ func (s *SmartContract) addCertificate(APIstub shim.ChaincodeStubInterface, args
 		if err != nil {
 			return shim.Error("failed to parse old certificate: " + err.Error())
 		}
+
 		oldPublicKey := oldCert.PublicKey.(*rsa.PublicKey)
-		fmt.Println(oldPublicKey)
-		isValidSign := verifySignature(sigString, oldPublicKey)
-		if isValidSign {
+		oldCertExpiry := oldCert.NotAfter
+		currentTime := time.Now()
+
+		oldCertGraceExpiry := oldCertExpiry
+		oldCertGraceExpiry.Add(90)
+
+		if currentTime.After(oldCertGraceExpiry) {
+
+			// no signature needed
+			fmt.Println(oldCertGraceExpiry)
+			fmt.Println("Signature not needed")
+
 			oldCertificate.CertString = certString
 			oldCertificateAsBytes, _ := json.Marshal(oldCertificate)
 			err = APIstub.PutState(subjectName, oldCertificateAsBytes)
@@ -198,8 +203,31 @@ func (s *SmartContract) addCertificate(APIstub shim.ChaincodeStubInterface, args
 				return shim.Error(err.Error())
 			}
 			return shim.Success(nil)
+
 		} else {
-			return shim.Error("Signature verification using old public key failed!")
+
+			// signature needed
+
+			if sigString == "" {
+				return shim.Error("Verification failed: signature not provided.")
+			}
+
+			//update the certificate after checking signature with old public key
+
+			fmt.Println(oldPublicKey)
+			isValidSign := verifySignature(sigString, oldPublicKey)
+			if isValidSign {
+				oldCertificate.CertString = certString
+				oldCertificateAsBytes, _ := json.Marshal(oldCertificate)
+				err = APIstub.PutState(subjectName, oldCertificateAsBytes)
+				if err != nil {
+					return shim.Error(err.Error())
+				}
+				return shim.Success(nil)
+			} else {
+				return shim.Error("Signature verification using old public key failed!")
+			}
+
 		}
 
 	}
