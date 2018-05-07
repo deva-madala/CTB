@@ -8,7 +8,7 @@ var os = require('os');
 var fabric_client = new Fabric_Client();
 
 var channel = fabric_client.newChannel('mychannel');
-var peer = fabric_client.newPeer('grpc://localhost:7051');
+var peer = fabric_client.newPeer('grpc://localhost:10051');
 channel.addPeer(peer);
 
 var member_user = null;
@@ -18,7 +18,14 @@ var tx_id = null;
 
 var args = process.argv.slice(2);
 var user = args[0];
-var subject = args[1]
+var subject = args[1];
+var functionCall = 'queryCertificate';
+
+if (args.length === 3) {
+    if (args[2] === 'history'){
+        functionCall = 'queryCertificateHistory';
+    }
+}
 
 Fabric_Client.newDefaultKeyValueStore({
 
@@ -49,7 +56,7 @@ Fabric_Client.newDefaultKeyValueStore({
     const request = {
         //targets : --- letting this default to the peers assigned to the channel
         chaincodeId: 'ca-blockchain',
-        fcn: 'queryCertificate',
+        fcn: functionCall,
         args: [subjectName]
     };
 
@@ -58,7 +65,7 @@ Fabric_Client.newDefaultKeyValueStore({
 }).then((query_responses) => {
     console.log("Query has completed, checking results");
     // query_responses could have more than one  results if there multiple peers were used as targets
-    if (query_responses && query_responses.length == 1) {
+    if (query_responses && query_responses.length === 1) {
         if (query_responses[0] instanceof Error) {
             console.error("error from query = ", query_responses[0]);
         } else {

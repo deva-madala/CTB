@@ -9,8 +9,13 @@ var fs = require('fs');
 var fabric_client = new Fabric_Client();
 
 var channel = fabric_client.newChannel('mychannel');
-var peer = fabric_client.newPeer('grpc://localhost:7051');
-channel.addPeer(peer);
+var peer0Org1 = fabric_client.newPeer('grpc://localhost:7051');
+var peer0Org2 = fabric_client.newPeer('grpc://localhost:8051');
+var peer0Org3 = fabric_client.newPeer('grpc://localhost:9051');
+channel.addPeer(peer0Org1);
+channel.addPeer(peer0Org2);
+channel.addPeer(peer0Org3);
+
 var order = fabric_client.newOrderer('grpc://localhost:7050');
 channel.addOrderer(order);
 
@@ -26,6 +31,17 @@ var intermediateCertPath = args[2];
 var sigFilePath = null;
 if (args.length === 4) {
     sigFilePath = args[3];
+}
+var eventHubAddr = 'grpc://localhost:10053';
+
+if (user === 'userCA1') {
+    eventHubAddr = 'grpc://localhost:7053';
+}
+if (user === 'userCA2') {
+    eventHubAddr = 'grpc://localhost:8053';
+}
+if (user === 'userCA3') {
+    eventHubAddr = 'grpc://localhost:9053';
 }
 
 
@@ -89,8 +105,18 @@ Fabric_Client.newDefaultKeyValueStore({
     var proposalResponses = results[0];
     var proposal = results[1];
     let isProposalGood = false;
+
+    console.log('peer0Org1:');
+    console.log(proposalResponses[0].response);
+    console.log('peer0Org2:');
+    console.log(proposalResponses[1].response);
+    console.log('peer0Org3:');
+    console.log(proposalResponses[2].response);
+
     if (proposalResponses && proposalResponses[0].response &&
-        proposalResponses[0].response.status === 200) {
+        proposalResponses[0].response.status === 200 && proposalResponses[1].response &&
+        proposalResponses[1].response.status === 200 && proposalResponses[2].response &&
+        proposalResponses[2].response.status === 200) {
         isProposalGood = true;
         console.log('Transaction proposal was good');
     } else {
@@ -119,7 +145,7 @@ Fabric_Client.newDefaultKeyValueStore({
         // get an eventhub once the fabric client has a user assigned. The user
         // is required bacause the event registration must be signed
         let event_hub = fabric_client.newEventHub();
-        event_hub.setPeerAddr('grpc://localhost:7053');
+        event_hub.setPeerAddr(eventHubAddr);
 
         // using resolve the promise so that result status may be processed
         // under the then clause rather than having the catch clause process

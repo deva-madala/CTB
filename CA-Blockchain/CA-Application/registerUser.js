@@ -15,7 +15,45 @@ var store_path = path.join(__dirname, 'hfc-key-store');
 console.log(' Store path:' + store_path);
 
 var args = process.argv.slice(2);
-var userEnrollmentID = args[0];
+var org = args[0];
+var userEnrollmentID = args[1];
+var admin = null;
+var addr = null;
+var caOrg = null;
+var orgMSP = null;
+var userAffiliation = null;
+
+if (org === 'org1') {
+    admin = 'adminOrg1';
+    addr = 'http://localhost:7054';
+    caOrg = 'ca1.example.com';
+    orgMSP = 'Org1MSP';
+    userAffiliation = 'org1.department1';
+}
+
+if (org === 'org2') {
+    admin = 'adminOrg2';
+    addr = 'http://localhost:8054';
+    caOrg = 'ca2.example.com';
+    orgMSP = 'Org2MSP';
+    userAffiliation = 'org2.department1';
+}
+
+if (org === 'org3') {
+    admin = 'adminOrg3';
+    addr = 'http://localhost:9054';
+    caOrg = 'ca3.example.com';
+    orgMSP = 'Org3MSP';
+    userAffiliation = 'org2.department1';
+}
+
+if (org === 'org4') {
+    admin = 'adminOrg4';
+    addr = 'http://localhost:10054';
+    caOrg = 'ca1.example.com';
+    orgMSP = 'Org4MSP';
+    userAffiliation = 'org2.department1';
+}
 
 Fabric_Client.newDefaultKeyValueStore({
 
@@ -32,9 +70,9 @@ Fabric_Client.newDefaultKeyValueStore({
         trustedRoots: [],
         verify: false
     };
-    fabric_ca_client = new Fabric_CA_Client('http://localhost:7054', null, '', crypto_suite);
+    fabric_ca_client = new Fabric_CA_Client(addr, null, '', crypto_suite);
 
-    return fabric_client.getUserContext('admin', true);
+    return fabric_client.getUserContext(admin, true);
 
 }).then((user_from_store) => {
 
@@ -49,7 +87,7 @@ Fabric_Client.newDefaultKeyValueStore({
     // first need to register the user with the CA server
     return fabric_ca_client.register({
         enrollmentID: userEnrollmentID,
-        affiliation: 'org1.department1',
+        affiliation: userAffiliation,
         role: 'client'
     }, admin_user);
 
@@ -66,7 +104,7 @@ Fabric_Client.newDefaultKeyValueStore({
 
     return fabric_client.createUser({
             username: userEnrollmentID,
-            mspid: 'Org1MSP',
+            mspid: orgMSP,
             cryptoContent: {privateKeyPEM: enrollment.key.toBytes(), signedCertPEM: enrollment.certificate}
         });
 
