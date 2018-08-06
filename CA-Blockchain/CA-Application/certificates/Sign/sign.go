@@ -31,14 +31,19 @@ func verify(sigString string, rsaPubKey rsa.PublicKey) {
 func main() {
 
 	privateKeyFile := os.Args[1]
-	pemString, err := ioutil.ReadFile(privateKeyFile)
-	if err != nil {
-		fmt.Println(err)
+	pemString, err1 := ioutil.ReadFile(privateKeyFile)
+
+	certFile := os.Args[2]
+	certPemString, err2 := ioutil.ReadFile(certFile)
+
+	if err1 != nil && err2 != nil {
+		fmt.Println(err1)
+		fmt.Println(err2)
 	} else {
 		block, _ := pem.Decode([]byte(pemString))
 		key, _ := x509.ParsePKCS1PrivateKey(block.Bytes)
 		rng := rand.Reader
-		message := []byte("This is a genuine request!")
+		message := []byte(certPemString)
 		hashed := sha256.Sum256(message)
 		signature, err := rsa.SignPKCS1v15(rng, key, crypto.SHA256, hashed[:])
 		if err != nil {

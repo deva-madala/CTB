@@ -29,9 +29,16 @@ var user = args[0];
 var certPath = args[1];
 var intermediateCertPath = args[2];
 var sigFilePath = null;
+var revoke = null;
 if (args.length === 4) {
     sigFilePath = args[3];
 }
+if (args.length === 5) {
+    sigFilePath = args[3];
+    revoke = args[4];
+    console.log(revoke);
+}
+
 var eventHubAddr = 'grpc://localhost:10053';
 
 if (user === 'userCA1') {
@@ -90,14 +97,26 @@ Fabric_Client.newDefaultKeyValueStore({
         sigString = fs.readFileSync(sigFilePath).toString();
     }
 
-    var request = {
+    if (revoke === null) {
+            var request = {
         //targets: let default to the peer assigned to the client
-        chaincodeId: 'ca-blockchain',
-        fcn: 'addCertificate',
-        args: [certString, intermediateCertString, sigString],
-        chainId: 'mychannel',
-        txId: tx_id
-    };
+            chaincodeId: 'ca-blockchain',
+            fcn: 'addCertificate',
+            args: [certString, intermediateCertString, sigString],
+            chainId: 'mychannel',
+            txId: tx_id
+        }; 
+    } else if (revoke === 'revokeCertificate') {
+          var request = {
+        //targets: let default to the peer assigned to the client
+            chaincodeId: 'ca-blockchain',
+            fcn: 'revokeCertificate',
+            args: [certString, intermediateCertString, sigString],
+            chainId: 'mychannel',
+            txId: tx_id
+        };   
+    }
+    
 
     // send the transaction proposal to the peers
     return channel.sendTransactionProposal(request);

@@ -22,8 +22,9 @@ type SmartContract struct {
 
 // Define the certificate structure, with 2 properties.  Structure tags are used by encoding/json library
 type Certificate struct {
-	SubjectName string `json:"subjectName"`
-	CertString  string `json:"certString"`
+	SubjectName  string `json:"subjectName"`
+	CertString   string `json:"certString"`
+	RevokeStatus string `json:"revokeStatus"`
 }
 
 func (s *SmartContract) Init(APIstub shim.ChaincodeStubInterface) sc.Response {
@@ -38,6 +39,8 @@ func (s *SmartContract) Invoke(APIstub shim.ChaincodeStubInterface) sc.Response 
 		return s.queryCertificateHistory(APIstub, args)
 	} else if function == "addCertificate" {
 		return s.addCertificate(APIstub, args)
+	} else if function == "revokeCertificate" {
+		return s.revokeCertificate(APIstub, args)
 	}
 	return shim.Error("Invalid Smart Contract function name.")
 }
@@ -68,7 +71,7 @@ func (s *SmartContract) queryCertificateHistory(APIstub shim.ChaincodeStubInterf
 	}
 	defer resultsIterator.Close()
 
-	// buffer is a JSON array containing historic values for the marble
+	// buffer is a JSON array containing historic values for the subject
 	var buffer bytes.Buffer
 	buffer.WriteString("[")
 
@@ -90,7 +93,7 @@ func (s *SmartContract) queryCertificateHistory(APIstub shim.ChaincodeStubInterf
 		buffer.WriteString(", \"Value\":")
 		// if it was a delete operation on given key, then we need to set the
 		//corresponding value null. Else, we will write the response.Value
-		//as-is (as the Value itself a JSON marble)
+		//as-is (as the Value itself a JSON)
 		if response.IsDelete {
 			buffer.WriteString("null")
 		} else {
@@ -117,9 +120,9 @@ func (s *SmartContract) queryCertificateHistory(APIstub shim.ChaincodeStubInterf
 	return shim.Success(buffer.Bytes())
 }
 
-func verifySignature(sigString string, rsaPubKey *rsa.PublicKey) bool {
-	message := []byte("This is a genuine request!")
-	hashed := sha256.Sum256(message)
+func verifySignatureOnMessage(sigString string, message string, rsaPubKey *rsa.PublicKey) bool {
+	messageBytes := []byte(message)
+	hashed := sha256.Sum256(messageBytes)
 	signature, _ := hex.DecodeString(sigString)
 	err := rsa.VerifyPKCS1v15(rsaPubKey, crypto.SHA256, hashed[:], signature)
 	if err != nil {
@@ -128,7 +131,95 @@ func verifySignature(sigString string, rsaPubKey *rsa.PublicKey) bool {
 	return true
 }
 
+func (s *SmartContract) revokeCertificate(APIstub shim.ChaincodeStubInterface, args []string) sc.Response {
+
+	if len(args) != 3 {
+		return shim.Error("Incorrect number of arguments. Expecting 3")
+	}
+
+	certString := args[0]
+	caCertString := args[1]
+	caSigOnCert := args[2]
+
+	certPEM := []byte(certString)
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return shim.Error("failed to parse certificate PEM")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return shim.Error("failed to parse certificate: " + err.Error())
+	}
+
+	subjectName := cert.Subject.CommonName
+
+	certificateAsBytes, _ := APIstub.GetState(subjectName)
+	if certificateAsBytes == nil {
+		return shim.Error("Certificate is not present in the ledger!")
+	}
+
+	certEntryInLedger := Certificate{}
+	err = json.Unmarshal(certificateAsBytes, &certEntryInLedger)
+	certInLedgerString := certEntryInLedger.CertString
+
+	if certInLedgerString != certString {
+		return shim.Error("Certificate mismatch: certificate for the domain present in the ledger is different")
+	}
+
+	certInLedgerPEM := []byte(certInLedgerString)
+	certInLedgerBlock, _ := pem.Decode(certInLedgerPEM)
+	if certInLedgerBlock == nil {
+		return shim.Error("failed to parse certificate in Ledger PEM")
+	}
+	certInLedger, err := x509.ParseCertificate(certInLedgerBlock.Bytes)
+	if err != nil {
+		return shim.Error("failed to parse certificate: " + err.Error())
+	}
+
+	caCertPEM := []byte(caCertString)
+	roots := x509.NewCertPool()
+	ok := roots.AppendCertsFromPEM(caCertPEM)
+	if !ok {
+		return shim.Error("failed to parse CA certificate")
+	}
+	opts := x509.VerifyOptions{
+		DNSName: subjectName,
+		Roots:   roots,
+	}
+	if _, err := certInLedger.Verify(opts); err != nil {
+		return shim.Error("failed to verify certificate using the given CA certificate: " + err.Error())
+	}
+
+	caBlock, _ := pem.Decode(caCertPEM)
+	if caBlock == nil {
+		return shim.Error("failed to parse CA certificate PEM")
+	}
+	caCert, err := x509.ParseCertificate(caBlock.Bytes)
+	if err != nil {
+		return shim.Error("failed to parse CA certificate: " + err.Error())
+	}
+	caPubKey := caCert.PublicKey.(*rsa.PublicKey)
+	if !verifySignatureOnMessage(caSigOnCert, caCertString, caPubKey) {
+		return shim.Error("failed to verify the signature!")
+	}
+
+	if certEntryInLedger.RevokeStatus == "revoked" {
+		return shim.Error("Certificate is already revoked")
+	}
+
+	//all the conditions passed and certificate can be revoked.
+	certEntryInLedger.RevokeStatus = "revoked"
+	certAsBytes, _ := json.Marshal(certEntryInLedger)
+	err = APIstub.PutState(subjectName, certAsBytes)
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+
+	return shim.Success(nil)
+}
+
 func (s *SmartContract) addCertificate(APIstub shim.ChaincodeStubInterface, args []string) sc.Response {
+
 	if len(args) != 3 {
 		return shim.Error("Incorrect number of arguments. Expecting 3")
 	}
@@ -170,6 +261,8 @@ func (s *SmartContract) addCertificate(APIstub shim.ChaincodeStubInterface, args
 
 	} else if certAsBytes != nil {
 
+		// certificate is present in the ledger
+
 		oldCertificate := Certificate{}
 		err = json.Unmarshal(certAsBytes, &oldCertificate)
 		oldCertString := oldCertificate.CertString
@@ -183,16 +276,20 @@ func (s *SmartContract) addCertificate(APIstub shim.ChaincodeStubInterface, args
 			return shim.Error("failed to parse old certificate: " + err.Error())
 		}
 
+		// get the old public key
 		oldPublicKey := oldCert.PublicKey.(*rsa.PublicKey)
 		oldCertExpiry := oldCert.NotAfter
 		currentTime := time.Now()
 
 		oldCertGraceExpiry := oldCertExpiry
-		oldCertGraceExpiry.Add(90)
+		oldCertGraceExpiry = oldCertGraceExpiry.Add(time.Duration(90*24) * time.Hour)
 
+		revokeStatus := oldCertificate.RevokeStatus
+
+		// check if cert is active and signature is needed
 		if currentTime.After(oldCertGraceExpiry) {
 
-			// no signature needed
+			// cert is not active - hence, no signature needed
 			fmt.Println(oldCertGraceExpiry)
 			fmt.Println("Signature not needed")
 
@@ -206,33 +303,85 @@ func (s *SmartContract) addCertificate(APIstub shim.ChaincodeStubInterface, args
 
 		} else {
 
-			// signature needed
+			// cert is active
 
-			if sigString == "" {
-				return shim.Error("Verification failed: signature not provided.")
-			}
+			if revokeStatus == "notRevoked" {
 
-			//update the certificate after checking signature with old public key
+				// signature needed
 
-			fmt.Println(oldPublicKey)
-			isValidSign := verifySignature(sigString, oldPublicKey)
-			if isValidSign {
-				oldCertificate.CertString = certString
-				oldCertificateAsBytes, _ := json.Marshal(oldCertificate)
-				err = APIstub.PutState(subjectName, oldCertificateAsBytes)
+				if sigString == "" {
+					return shim.Error("Verification failed: signature not provided.")
+				}
+
+				//update the certificate after checking signature with old public key
+
+				fmt.Println(oldPublicKey)
+				isValidSign := verifySignatureOnMessage(sigString, certString, oldPublicKey)
+				if isValidSign {
+					oldCertificate.CertString = certString
+					oldCertificateAsBytes, _ := json.Marshal(oldCertificate)
+					err = APIstub.PutState(subjectName, oldCertificateAsBytes)
+					if err != nil {
+						return shim.Error(err.Error())
+					}
+					return shim.Success(nil)
+				} else {
+					return shim.Error("Signature verification using old public key failed!")
+				}
+
+			} else if revokeStatus == "revoked" {
+
+				// since the last cert is revoked, check if idle period has passed
+
+				resultsIterator, err := APIstub.GetHistoryForKey(subjectName)
 				if err != nil {
 					return shim.Error(err.Error())
 				}
-				return shim.Success(nil)
-			} else {
-				return shim.Error("Signature verification using old public key failed!")
+				defer resultsIterator.Close()
+
+				finalTimestamp := ""
+				for resultsIterator.HasNext() {
+					response, err := resultsIterator.Next()
+					if err != nil {
+						return shim.Error(err.Error())
+					}
+					finalTimestamp = time.Unix(response.Timestamp.Seconds, int64(response.Timestamp.Nanos)).String()
+				}
+				layout := "2006-01-02 15:04:05 +0000 UTC"
+				timeStampWithIdlePeriod, err := time.Parse(layout, finalTimestamp)
+				if err != nil {
+					return shim.Error("Error parsing timestamp " + err.Error())
+				}
+				timeStampWithIdlePeriod = timeStampWithIdlePeriod.Add(time.Duration(48) * time.Hour)
+
+				if currentTime.After(timeStampWithIdlePeriod) {
+
+					// idle period has passed. New certificate can be issued without checking signature
+
+					oldCertificate.CertString = certString
+					oldCertificate.RevokeStatus = "notRevoked"
+					oldCertificateAsBytes, _ := json.Marshal(oldCertificate)
+					err = APIstub.PutState(subjectName, oldCertificateAsBytes)
+					if err != nil {
+						return shim.Error(err.Error())
+					}
+					return shim.Success(nil)
+
+				} else {
+
+					// not valid - idle period has not passed - cannot issue a new certificate
+					return shim.Error("Idle period for the last revoked certificate has not passed!")
+
+				}
+
 			}
 
 		}
 
 	}
 
-	var certificate = Certificate{SubjectName: subjectName, CertString: certString}
+	// executes only if certificate is not present in the ledger - new entry
+	var certificate = Certificate{SubjectName: subjectName, CertString: certString, RevokeStatus: "notRevoked"}
 
 	certificateAsBytes, _ := json.Marshal(certificate)
 	err = APIstub.PutState(subjectName, certificateAsBytes)
